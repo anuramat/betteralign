@@ -478,13 +478,13 @@ func hasSuffixes(fset map[string]bool, fn string, suffixes []string) bool {
 }
 
 func hasGeneratedComment(generatedFset map[string]bool, fn string, file *ast.File) bool {
+	use_regex := true
 	for _, cg := range file.Comments {
 		if cg.Pos() > file.Package {
-			return false
+			use_regex = false
 		}
-
 		for _, l := range cg.List {
-			if reGeneratedBy(l.Text) {
+			if (use_regex && reGeneratedBy(l.Text)) || strings.Contains(l.Text, "This code was generated automatically using") {
 				generatedFset[fn] = true
 				return true
 			}
