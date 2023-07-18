@@ -40,6 +40,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/facette/natsort"
 	"github.com/google/renameio/v2/maybe"
 	"github.com/sirkon/dst"
 	"github.com/sirkon/dst/decorator"
@@ -76,13 +77,18 @@ to occupy the same CPU cache line, inducing a form of memory contention
 known as "false sharing" that slows down both goroutines.
 `
 
-const ignoreStruct = "betteralign:ignore"
+const (
+	ignoreStruct = "betteralign:ignore"
+	allStructs   = "all"
+	fixedStructs = "fixed"
+)
 
 var (
 	unsafePointerTyp  = types.Unsafe.Scope().Lookup("Pointer").(*types.TypeName).Type()
 	apply             bool
 	testFiles         bool
 	generatedFiles    bool
+	sortByNames       string
 	testSuffixes      = []string{"_test.go"}
 	generatedSuffixes = []string{"_generated.go", "_gen.go", ".gen.go", ".pb.go", ".pb.gw.go"}
 	ErrStatFile       = errors.New("unable to stat the file")
@@ -101,6 +107,11 @@ func init() {
 	Analyzer.Flags.BoolVar(&apply, "apply", false, "apply suggested fixes")
 	Analyzer.Flags.BoolVar(&testFiles, "test_files", false, "also check and fix test files")
 	Analyzer.Flags.BoolVar(&generatedFiles, "generated_files", false, "also check and fix generated files")
+	Analyzer.Flags.StringVar(&sortByNames, "sortnames", "",
+		fmt.Sprintf("sort fields by names: %v - all structs, %v - only if they were fixed", allStructs, fixedStructs))
+	if len(sortByNames) != 0 && sortByNames != fixedStructs && sortByNames != allStructs {
+		panic("incorrect value for sortnames flag")
+	}
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {
@@ -180,7 +191,7 @@ func betteralign(pass *analysis.Pass, aNode *ast.StructType, typ *types.Struct, 
 		message = fmt.Sprintf("struct of size %d could be %d", sz, optsz)
 	} else if ptrs := s.ptrdata(typ); ptrs != optptrs {
 		message = fmt.Sprintf("struct with %d pointer bytes could be %d", ptrs, optptrs)
-	} else {
+	} else if sortByNames != allStructs {
 		// Already optimal order.
 		return
 	}
@@ -238,6 +249,7 @@ func optimalOrder(str *types.Struct, sizes *gcSizes) (*types.Struct, []int) {
 	nf := str.NumFields()
 
 	type elem struct {
+		name    string
 		index   int
 		alignof int64
 		sizeof  int64
@@ -249,10 +261,11 @@ func optimalOrder(str *types.Struct, sizes *gcSizes) (*types.Struct, []int) {
 		field := str.Field(i)
 		ft := field.Type()
 		elems[i] = elem{
-			i,
-			sizes.Alignof(ft),
-			sizes.Sizeof(ft),
-			sizes.ptrdata(ft),
+			name:    field.Origin().Name(),
+			index:   i,
+			alignof: sizes.Alignof(ft),
+			sizeof:  sizes.Sizeof(ft),
+			ptrdata: sizes.ptrdata(ft),
 		}
 	}
 
@@ -297,6 +310,11 @@ func optimalOrder(str *types.Struct, sizes *gcSizes) (*types.Struct, []int) {
 		// Lastly, order by size.
 		if ei.sizeof != ej.sizeof {
 			return ei.sizeof > ej.sizeof
+		}
+
+		// And maybe by name
+		if len(sortByNames) != 0 {
+			return natsort.Compare(ei.name, ej.name)
 		}
 
 		return false
