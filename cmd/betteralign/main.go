@@ -7,7 +7,6 @@
 package main
 
 import (
-	_ "github.com/KimMachineGun/automemlimit"
 	"github.com/dkorunic/betteralign"
 	"go.uber.org/automaxprocs/maxprocs"
 	"golang.org/x/tools/go/analysis/singlechecker"
